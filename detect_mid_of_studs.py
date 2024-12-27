@@ -24,16 +24,16 @@ def find_center(xyxy):
     if w/h > ratio_lim or h/w > ratio_lim:
          return None
     return np.array([cx - img_center[0], cy - img_center[1]])
-def check_centered(cxcy):
-    offset = np.array([36,-36])
-    tol = np.array([10,10])
-    xy = cxcy + offset
-    if abs(xy[0]) > tol[0]:
-        print("x tilt by ", xy[0])
-    if abs(xy[1]) > tol[1]:
-        print("y tilt by ", xy[1])
-    if abs(xy[0]) <= tol[0] and abs(xy[1]) <= tol[1]:
-        print("No Tilt")
+# def check_centered(cxcy):
+#     offset = np.array([36,-36])
+#     tol = np.array([10,10])
+#     xy = cxcy + offset
+#     if abs(xy[0]) > tol[0]:
+#         print("x tilt by ", xy[0])
+#     if abs(xy[1]) > tol[1]:
+#         print("y tilt by ", xy[1])
+#     if abs(xy[0]) <= tol[0] and abs(xy[1]) <= tol[1]:
+#         print("No Tilt")
     
 
     
@@ -45,6 +45,8 @@ def check_centered(cxcy):
 # model = YOLO("yolov8n.pt")
 model = YOLO("mid_of_studs2.pt")
 camera = cv2.VideoCapture(4)
+filtered_center = np.array([0,0])
+
 while True:
     
     ret, og_frame = camera.read()
@@ -79,11 +81,11 @@ while True:
                     cv2.rectangle(og_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Green box
                     # Put confidence text
                     cv2.putText(og_frame, f'{confidence:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                # center = find_center(detection.xyxy[0])
+                center = find_center(detection.xyxy[0])
                 
-                # if center is not None:
-                #     print(center)
-                #     check_centered(center)
+                if center is not None:
+                    filtered_center = 0.9 * filtered_center + 0.1 * center
+                    print(filtered_center.astype(int))
                     
     # t0 = time.perf_counter()
     
