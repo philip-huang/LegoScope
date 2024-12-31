@@ -5,8 +5,8 @@ import cv2
 import time
 import numpy as np
 import torch
-#import rospy
-#from std_msgs.msg import Float32MultiArray
+import rospy
+from std_msgs.msg import Float32MultiArray
 last_mos = np.array([0,0])
 
 def process_results(results):
@@ -17,14 +17,16 @@ def process_results(results):
         if not (results[0].keypoints.conf is None):
             mid_of_studs = results[0].keypoints.xy[0,1,:]
             mid_of_studs_conf = results[0].keypoints.conf[0,1]
-            last_mos = 0.8 * last_mos + 0.2 * mid_of_studs
-            print("diff_from_center: ", last_mos, "with confidence", mid_of_studs_conf.cpu().item())
+            last_mos = 0.8 * last_mos + 0.2 * np.array(mid_of_studs)
+            output = np.zeros(3)
+            output[:2] = last_mos
+            output[2] = mid_of_studs_conf.cpu().item()
+            #output = output @ transform.T
+            print("center: ", last_mos, "with confidence", mid_of_studs_conf.cpu().item())
         else:
             print("no lego keypoints detected")
-        output = np.zeros(3)
-        output[:2] = last_mos
-        output[2] = mid_of_studs_conf.cpu().item()
-        output = output @ transform.T
+            output = np.zeros(3)
+        
         return output
     
 def compute_offset(camera, model, fx = 2700 , fy = 2700, z = 45.0):
@@ -36,17 +38,21 @@ def compute_offset(camera, model, fx = 2700 , fy = 2700, z = 45.0):
     [x,y,confidence] if detected, None otherwise
     '''
     ret, og_frame = camera.read()
-    h, w, c = og_frame.shape
+    if ret:
+        h, w, c = og_frame.shape
+    else:
+        print("read frame file")
+        return None
     start_w = (w - 480) // 2
     end_w = start_w + 480
 
     # Crop the middle section
     og_frame = og_frame[:, start_w:end_w, :]
-    results = model.predict(og_frame, show = True, verbose = False)
+    results = model.predict(og_frame, show = False, verbose = False)
     output = process_results(results)
-    output -= np.array([240,240])#diff from center
-    output *= z
-    output /= np.array([fx, fy])
+    output[:2] -= np.array([210,270])#diff from center
+    output[:2] *= z
+    output[:2] /= np.array([fx, fy])
     if output[2] > 0.7:
         return output[:2]
     else:
