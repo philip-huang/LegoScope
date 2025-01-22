@@ -87,7 +87,7 @@ while True:
 
     # Crop the middle section
     og_frame = og_frame[:, start_w:end_w, :]
-    results = model.predict(og_frame, show = True, verbose = False)
+    results = model.predict(og_frame, show = True, verbose = False, iou = 0.3)
     output = process_results(results)
         # light_ring = results[0].boxes[0]
         # box = light_ring.xyxy[0]  # x1, y1, x2, y2 format
