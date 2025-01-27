@@ -332,6 +332,10 @@ def compute_offset(camera, model, fx = 1000 , fy = 1000, z = 30.0):
     bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines2(bottom_stud_mask, bottom_stud_side_x, y_bottom)
     target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
     naive_center = np.mean(centers, axis = 0)
+
+    studs_diff = top_stud_center_adj - bottom_stud_center_adj
+    angle = np.arctan2(studs_diff[1], studs_diff[0])
+    print(angle)
     cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
     cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 150, 2)
     cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
