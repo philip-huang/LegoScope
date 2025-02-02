@@ -9,8 +9,9 @@ from collections import deque
 from scipy.optimize import least_squares
 from circle_fit import taubinSVD
 from scipy.optimize import minimize
-last_mos = np.array([0,0])
+last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=10)
+TOOL_CENTER = np.array([180,291])
 def process_results2(results):
     transform = np.array([0.01, 0.01, 1])
     global last_mos
@@ -244,21 +245,20 @@ def find_intersections(centers, y_top, y_bottom):
 
     return np.asarray([intersection1, intersection2])
 
-def process_results(result, conf):
+def process_results(result, conf, angle):
     transform = np.array([0.01, 0.01, 1])
     global last_mos_queue
     
     # Convert the new measurement to CPU and append to the queue
     if conf > 0.5:
-        new_measurement = result
+        new_measurement = np.concatenate([result, [angle]])
         last_mos_queue.append(new_measurement)
         
         # Compute the rolling average
         rolling_average = np.mean(np.array(last_mos_queue), axis=0)
 
         output = np.zeros(3)
-        output[:2] = rolling_average
-        output[2] = conf
+        output[:3] = rolling_average
 
         print("center: ", rolling_average, "with confidence", conf)
             
@@ -266,8 +266,89 @@ def process_results(result, conf):
     else:
         return None
     
+def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
+    '''
+    Arguments: 
+    camera to read from, and yolo keypoint model to use
+    camera focal and depth in mm. Assume cx, cy are at image center, and assume fixed z
+    Outputs:
+    [x,y,confidence] if detected, None otherwise
+    '''
+    t0 = time.perf_counter()
+    ret, og_frame = camera.read()
+    # og_frame = cv2.imread("sample.jpg")
+    if ret:
+        h, w, c = og_frame.shape
+    else:
+        print("read frame file")
+        return None
+    start_w = (w - 480) // 2
+    end_w = start_w + 480
+    
+    # Crop the middle section
+    # og_frame = cv2.resize(og_frame, [640,480])
+    og_frame = og_frame[:, start_w:end_w, :]
+    t1 = time.perf_counter()
+    results = model.predict(og_frame, show = True, verbose = False)
+    
+    t2 = time.perf_counter()
+    if results[0].masks is None:
+        print("No Studs detected")
+        return None
+    mask = results[0].masks.xy
+    conf = torch.min(results[0].boxes.conf).to('cpu').item()
+    if (len(results[0].masks) != 2):
+        print(len(results[0].masks), " studs detected, abort computing offset")
+        return None
+    segments = np.zeros(og_frame.shape[:2])
+    centers = []
+    radiuses = []
+    for i in range(min(2, len(mask))):
+        (x, y), radius = cv2.minEnclosingCircle(mask[i])
+        center = (int(x), int(y))  # Convert center coordinates to integers
+        radius = int(radius)       # Convert radius to an integer
+        centers.append(center)
+        radiuses.append(radius)
+    top_stud_mask = mask[np.argmax([np.median(mask[0][:,1]), np.median(mask[1][:,1])])] #top stud is the one with higher Y value, which is at the BOTTOM in image
+    bottom_stud_mask = mask[np.argmin([np.median(mask[0][:,1]), np.median(mask[1][:,1])])]
+    y_top = np.min(top_stud_mask[:,1]).astype(int)
+    y_bottom = np.max(bottom_stud_mask[:,1]).astype(int)
+    if(np.average([centers[0][0], centers[1][0]])< 200):
+        top_stud_side_x = np.max(top_stud_mask[:,0]).astype(int)
+        bottom_stud_side_x = np.max(bottom_stud_mask[:,0]).astype(int)
+    else:
+        top_stud_side_x = np.min(top_stud_mask[:,0]).astype(int)
+        bottom_stud_side_x = np.min(bottom_stud_mask[:,0]).astype(int)
 
-def compute_offset(camera, model, fx = 1000 , fy = 1000, z = 30.0):
+    # intersects = find_intersections(centers, y_top, y_bottom)
+    # target_center = np.average(intersects, axis=0)
+
+    top_stud_center_adj, top_stud_radius_adj = min_enclosing_circle_tangent_to_lines(top_stud_mask, top_stud_side_x, y_top)
+    bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
+    target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
+
+    cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+    cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 150, 2)
+    cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+    cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+    cv2.imshow("og_frame", og_frame)
+    cv2.waitKey(1)
+    t3 = time.perf_counter()
+
+    studs_diff = top_stud_center_adj - bottom_stud_center_adj
+    angle = np.arctan2(studs_diff[1], studs_diff[0])
+    angle -= 1.5143
+    output = process_results(target_center_adj, conf,angle)
+    if output is None:
+        print("low confidence, ignoring offset")
+        return None
+    output[:2] -= TOOL_CENTER#diff from center
+    output[:2] *= z
+    output[:2] /= np.array([fx, fy])
+    output[0] *= -1 #x is reversed
+    output[1] *= -1 
+    return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
+def compute_offset2(camera, model, fx = 1000 , fy = 1000, z = 30.0):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -276,7 +357,7 @@ def compute_offset(camera, model, fx = 1000 , fy = 1000, z = 30.0):
     [x,y,confidence] if detected, None otherwise
     '''
     ret, og_frame = camera.read()
-    og_frame = cv2.imread("sample.jpg")
+    #og_frame = cv2.imread("sample.jpg")
     h, w, c = og_frame.shape
     # if ret:
     #     
@@ -360,7 +441,7 @@ def compute_offset(camera, model, fx = 1000 , fy = 1000, z = 30.0):
     
 
 model = YOLO("studs-seg2.pt")
-camera = cv2.VideoCapture(5)
+camera = cv2.VideoCapture(4)
 filtered_center = np.array([0,0])
 
 # Set the loop rate (e.g., 10 Hz)
