@@ -7,11 +7,11 @@ import numpy as np
 import torch
 from collections import deque
 from scipy.optimize import least_squares
-from circle_fit import taubinSVD
+# from circle_fit import taubinSVD
 from scipy.optimize import minimize
 last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=10)
-TOOL_CENTER = np.array([180,291])
+TOOL_CENTER = np.array([170, 265])
 def process_results2(results):
     transform = np.array([0.01, 0.01, 1])
     global last_mos
@@ -103,10 +103,10 @@ def cost_function(r, line_x, line_y, contour):
     # Compute distances and enclosed ratio
     distances = np.linalg.norm(contour - [cx, cy], axis=1)
     outlier_ratio = np.mean(distances > radius)
-
+    
     # Compute cost
     total_area = (2 * radius) ** 2  # Area (squared diameter)
-    cost = 1e7 * outlier_ratio
+    cost = 3e6 * outlier_ratio + total_area
     return cost
 def optimize_radius(line_x, line_y, contour, initial_guess):
     """
@@ -116,11 +116,11 @@ def optimize_radius(line_x, line_y, contour, initial_guess):
         cost_function, 
         x0=[initial_guess],  # Initial guess for radius
         args=(line_x, line_y, contour),  # Additional arguments for the cost function
-        bounds=[(0.1, None)]  # Radius must be positive
+        bounds=[(80,200)]  # Radius must be positive
     )
     optimized_radius = result.x[0]
     return optimized_radius, result.fun
-def min_enclosing_circle_tangent_to_lines2(contour, line_x, line_y):
+def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
     """
     Find the minimum enclosing circle of a contour that is tangent to both a vertical and a horizontal line.
     
@@ -165,7 +165,7 @@ def min_enclosing_circle_tangent_to_lines2(contour, line_x, line_y):
         cy = line_y + radius
     # Return the adjusted circle center and radius
     return np.array((cx, cy)).astype(int), int(radius)
-def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
+def min_enclosing_circle_tangent_to_lines_old(contour, line_x, line_y):
     """
     Find the minimum enclosing circle of a contour that is tangent to both a vertical and a horizontal line.
     
@@ -255,7 +255,7 @@ def process_results(result, conf, angle):
         last_mos_queue.append(new_measurement)
         
         # Compute the rolling average
-        rolling_average = np.mean(np.array(last_mos_queue), axis=0)
+        rolling_average = np.median(np.array(last_mos_queue), axis=0)
 
         output = np.zeros(3)
         output[:3] = rolling_average
@@ -266,7 +266,7 @@ def process_results(result, conf, angle):
     else:
         return None
     
-def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
+def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -289,7 +289,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
     # og_frame = cv2.resize(og_frame, [640,480])
     og_frame = og_frame[:, start_w:end_w, :]
     t1 = time.perf_counter()
-    results = model.predict(og_frame, show = True, verbose = False)
+    results = model.predict(og_frame, show = show_yolo, verbose = False)
     
     t2 = time.perf_counter()
     if results[0].masks is None:
@@ -325,19 +325,28 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
 
     top_stud_center_adj, top_stud_radius_adj = min_enclosing_circle_tangent_to_lines(top_stud_mask, top_stud_side_x, y_top)
     bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
-    target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
 
-    cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
-    cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 150, 2)
-    cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
-    cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
-    cv2.imshow("og_frame", og_frame)
-    cv2.waitKey(1)
+    # top_stud_center_adj, top_stud_radius_adj = fit_circle(top_stud_mask)
+    # bottom_stud_center_adj, bottom_stud_radius_adj = fit_circle(bottom_stud_mask)
+    target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
+    if visualize:
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+        
+        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        cv2.imshow("og_frame", og_frame)
+        segments=cv2.fillPoly(segments, [top_stud_mask.astype(np.int32)], 120)
+        segments=cv2.fillPoly(segments, [bottom_stud_mask.astype(np.int32)], 120)
+        cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
+        cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
+        cv2.imshow("masks", segments)
+        
+        cv2.waitKey(100)
     t3 = time.perf_counter()
 
     studs_diff = top_stud_center_adj - bottom_stud_center_adj
     angle = np.arctan2(studs_diff[1], studs_diff[0])
-    angle -= 1.5143
+    angle -= 1.4443
     output = process_results(target_center_adj, conf,angle)
     if output is None:
         print("low confidence, ignoring offset")
@@ -345,18 +354,20 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
     output[:2] -= TOOL_CENTER#diff from center
     output[:2] *= z
     output[:2] /= np.array([fx, fy])
-    output[0] *= -1 #x is reversed
-    output[1] *= -1 
+
+    #temporary scaling of offset for tuning: x,y scale should be -1 and yaw should be 1
+    output[0] *= -0.7 #x,y is reversed
+    output[1] *= -0.7 
+    output[2] *= 0.5
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
+if __name__ == "__main__":
+    model = YOLO("studs-seg2.pt")
+    camera = cv2.VideoCapture(0)
+    filtered_center = np.array([0,0])
 
-    
-model = YOLO("studs-seg2.pt")
-camera = cv2.VideoCapture(4)
-filtered_center = np.array([0,0])
-
-# Set the loop rate (e.g., 10 Hz)
-while True:
-    # Get the detected offset
-    offset = compute_offset(camera, model)
-    print(offset)
+    # Set the loop rate (e.g., 10 Hz)
+    while True:
+        # Get the detected offset
+        offset = compute_offset(camera, model, show_yolo=False, visualize=True)
+        print(offset)

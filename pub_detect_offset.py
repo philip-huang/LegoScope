@@ -11,30 +11,11 @@ import rospy
 from std_msgs.msg import Float32MultiArray
 from scipy.optimize import least_squares
 from find_cam import find_cam
+from detect_offset import compute_offset, process_results
 last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=10)
-TOOL_CENTER = np.array([180,291])
-def process_results2(results):
-    transform = np.array([0.01, 0.01, 1])
-    global last_mos
-    if len(results) == 1:
-        result = results[0]
-        if not (results[0].keypoints.conf is None):
-            mid_of_studs = results[0].keypoints.xy[0,1,:]
-            mid_of_studs_conf = results[0].keypoints.conf[0,1]
-            last_mos = 0.8 * last_mos + 0.2 * np.array(mid_of_studs.to('cpu'))
-            output = np.zeros(3)
-            output[:2] = last_mos
-            output[2] = mid_of_studs_conf.cpu().item()
-            #output = output @ transform.T
-            print("center: ", last_mos, "with confidence", mid_of_studs_conf.cpu().item())
-        else:
-            print("no lego keypoints detected")
-            output = np.zeros(3)
-        
-        return output
-
-def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
+# TOOL_CENTER = np.array([170,265])
+def min_enclosing_circle_tangent_to_lines_unused(contour, line_x, line_y):
     """
     Find the minimum enclosing circle of a contour that is tangent to both a vertical and a horizontal line.
     
@@ -75,7 +56,7 @@ def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
     # Return the adjusted circle center and radius
     return np.array((cx, cy)).astype(int), int(radius)
 
-def find_intersections(centers, y_top, y_bottom):
+def find_intersections_unused(centers, y_top, y_bottom):
     """
     Calculate the intersection points of Line1 with horizontal lines at y_top and y_bottom.
     
@@ -114,7 +95,7 @@ def find_intersections(centers, y_top, y_bottom):
 
     return np.asarray([intersection1, intersection2])
 
-def process_results(result, conf, angle):
+def process_results_unused(result, conf, angle):
     transform = np.array([0.01, 0.01, 1])
     global last_mos_queue
     
@@ -136,7 +117,7 @@ def process_results(result, conf, angle):
         return None
     
 
-def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
+def compute_offset_unused(camera, model, fx = 1100 , fy = 1100, z = 30.0):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -209,55 +190,56 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0):
     output[:2] -= TOOL_CENTER#diff from center
     output[:2] *= z
     output[:2] /= np.array([fx, fy])
-    output[0] *= -1 #x is reversed
-    output[1] *= -1 
+    output[0] *= -0.7 #x is reversed
+    output[1] *= -0.7 
     return np.concatenate([output[:2] / 1000, output[2]]) #mm to meter
     # except Exception as e:
     #     print("error: ", e)
     #     return None
 
-model = YOLO("studs-seg2.pt")
-camera_ids = find_cam()
-if camera_ids is None:
-    print("no camera detected")
-    assert False
-else:
-    camera = cv2.VideoCapture(camera_ids[-1])
+if __name__ == "__main__":
+    model = YOLO("studs-seg2.pt")
+    camera_ids = find_cam()
+    if camera_ids is None:
+        print("no camera detected")
+        assert False
+    else:
+        camera = cv2.VideoCapture(camera_ids[-1])
 
-filtered_center = np.array([0,0])
+    filtered_center = np.array([0,0])
 
-rospy.init_node('tool_offset_publisher', anonymous=True)
-tool_offset_pub = rospy.Publisher('tool_offset', Float32MultiArray, queue_size=10)
+    rospy.init_node('tool_offset_publisher', anonymous=True)
+    tool_offset_pub = rospy.Publisher('tool_offset', Float32MultiArray, queue_size=2)
 
-# Set the loop rate (e.g., 10 Hz)
-rate = rospy.Rate(10)
+    # Set the loop rate (e.g., 10 Hz)
+    rate = rospy.Rate(8)
 
-while not rospy.is_shutdown():
-    # Get the detected offset
-    offset = compute_offset(camera, model)
-    print(offset)
-    # Publish only if offset is not None
-    # If offset is None (no feature detected), controller's offset isn't updated
-    if offset is not None:
-        # Create a Float32MultiArray message
-        msg = Float32MultiArray()
-        msg.data = offset
-        print("published")
-        # Publish the message
-        tool_offset_pub.publish(msg)
+    while not rospy.is_shutdown():
+        # Get the detected offset
+        offset = compute_offset(camera, model)
+        print(offset)
+        # Publish only if offset is not None
+        # If offset is None (no feature detected), controller's offset isn't updated
+        if offset is not None:
+            # Create a Float32MultiArray message
+            msg = Float32MultiArray()
+            msg.data = offset
+            print("published")
+            # Publish the message
+            tool_offset_pub.publish(msg)
 
-    # Sleep to maintain the loop rate
-    rate.sleep() 
-# while True:
-    
-#     ret, og_frame = camera.read()
-#     h, w, c = og_frame.shape
+        # Sleep to maintain the loop rate
+        rate.sleep() 
+    # while True:
+        
+    #     ret, og_frame = camera.read()
+    #     h, w, c = og_frame.shape
 
-# # Calculate the start and end points for the width dimension to get the middle 480 pixels
-#     start_w = (w - 480) // 2
-#     end_w = start_w + 480
+    # # Calculate the start and end points for the width dimension to get the middle 480 pixels
+    #     start_w = (w - 480) // 2
+    #     end_w = start_w + 480
 
-#     # Crop the middle section
-#     og_frame = og_frame[:, start_w:end_w, :]
-#     results = model.predict(og_frame, show = True, verbose = False)
-#     process_results(results)
+    #     # Crop the middle section
+    #     og_frame = og_frame[:, start_w:end_w, :]
+    #     results = model.predict(og_frame, show = True, verbose = False)
+    #     process_results(results)
