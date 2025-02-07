@@ -320,14 +320,9 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         top_stud_side_x = np.min(top_stud_mask[:,0]).astype(int)
         bottom_stud_side_x = np.min(bottom_stud_mask[:,0]).astype(int)
 
-    # intersects = find_intersections(centers, y_top, y_bottom)
-    # target_center = np.average(intersects, axis=0)
-
     top_stud_center_adj, top_stud_radius_adj = min_enclosing_circle_tangent_to_lines(top_stud_mask, top_stud_side_x, y_top)
     bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
 
-    # top_stud_center_adj, top_stud_radius_adj = fit_circle(top_stud_mask)
-    # bottom_stud_center_adj, bottom_stud_radius_adj = fit_circle(bottom_stud_mask)
     target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
     if visualize:
         cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
@@ -337,8 +332,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         cv2.imshow("og_frame", og_frame)
         segments=cv2.fillPoly(segments, [top_stud_mask.astype(np.int32)], 120)
         segments=cv2.fillPoly(segments, [bottom_stud_mask.astype(np.int32)], 120)
-        cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
-        cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
+        # cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
+        # cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
         cv2.imshow("masks", segments)
         
         cv2.waitKey(100)
@@ -363,7 +358,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 
 if __name__ == "__main__":
     model = YOLO("studs-seg2.pt")
-    camera = cv2.VideoCapture(0)
+    camera = cv2.VideoCapture(4)
     filtered_center = np.array([0,0])
 
     # Set the loop rate (e.g., 10 Hz)
