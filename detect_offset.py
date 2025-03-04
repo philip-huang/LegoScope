@@ -9,9 +9,63 @@ from collections import deque
 from scipy.optimize import least_squares
 # from circle_fit import taubinSVD
 from scipy.optimize import minimize
+import detect_light_ring
+from shapely.geometry import Polygon, Point
+import os
+import time
+from datetime import datetime
 last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=10)
-TOOL_CENTER = np.array([170, 265])
+TOOL_CENTER = np.array([160, 265])
+def mask_in_circle(mask_points, cx, cy, radius):
+    """
+    Compute the percentage of the mask area that lies inside a given circle.
+    
+    Parameters:
+    - mask_points: List of (x, y) tuples representing the polygon vertices of the mask.
+    - cx, cy: Center of the circle.
+    - radius: Radius of the circle.
+    
+    Returns:
+    - float: Percentage of the mask area inside the circle.
+    """
+    # Convert the mask into a polygon
+    mask_polygon = Polygon(mask_points)
+    
+    # Define the circle as a shapely object
+    circle = Point(cx, cy).buffer(radius)  # This creates a circular polygon
+    
+    # Compute the intersection of the mask with the circle
+    intersection = mask_polygon.intersection(circle)
+    
+    # Compute areas
+    mask_area = mask_polygon.area
+    intersection_area = intersection.area
+    
+    # Compute percentage
+    percentage_inside = (intersection_area / mask_area) * 1 if mask_area > 0 else 0
+    
+    return percentage_inside
+
+def polygon_area(points):
+    """
+    Compute the area of a polygon given its vertices using the Shoelace theorem.
+    
+    Parameters:
+    - points: List of (x, y) tuples representing the polygon vertices.
+    
+    Returns:
+    - float: The area of the polygon.
+    """
+    points = np.array(points)  # Convert list to NumPy array for easier indexing
+    x = points[:, 0]
+    y = points[:, 1]
+    
+    # Apply Shoelace formula
+    area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+    
+    return area
+
 def process_results2(results):
     transform = np.array([0.01, 0.01, 1])
     global last_mos
@@ -102,11 +156,15 @@ def cost_function(r, line_x, line_y, contour):
 
     # Compute distances and enclosed ratio
     distances = np.linalg.norm(contour - [cx, cy], axis=1)
-    outlier_ratio = np.mean(distances > radius)
+    #outlier_ratio = np.mean(distances > radius)
+
+    outlier_ratio = 1 - mask_in_circle(contour, cx, cy, radius)
     
     # Compute cost
-    total_area = (2 * radius) ** 2  # Area (squared diameter)
-    cost = 3e6 * outlier_ratio + total_area
+    total_area = np.pi * radius ** 2  # Area (squared diameter)
+    expected_area = np.pi * 60 ** 2
+    area_diff = total_area - expected_area
+    cost = 3e5 * outlier_ratio + area_diff
     return cost
 def optimize_radius(line_x, line_y, contour, initial_guess):
     """
@@ -250,7 +308,7 @@ def process_results(result, conf, angle):
     global last_mos_queue
     
     # Convert the new measurement to CPU and append to the queue
-    if conf > 0.5:
+    if conf > 0.3:
         new_measurement = np.concatenate([result, [angle]])
         last_mos_queue.append(new_measurement)
         
@@ -266,7 +324,7 @@ def process_results(result, conf, angle):
     else:
         return None
     
-def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False):
+def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = False, crosshair = None):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -276,6 +334,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     '''
     t0 = time.perf_counter()
     ret, og_frame = camera.read()
+    
     # og_frame = cv2.imread("sample.jpg")
     if ret:
         h, w, c = og_frame.shape
@@ -284,12 +343,23 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         return None
     start_w = (w - 480) // 2
     end_w = start_w + 480
-    
+    og_frame = og_frame[:, start_w:end_w, :]
+    if crosshair:
+        center_x, center_y = map(int, crosshair)
+        crosshair_length = 200  # Length of the crosshair lines
+        color = (0,0,0)  # Green color
+        thickness = 2  # Line thickness
+        cv2.line(og_frame, (center_x, center_y - crosshair_length), 
+                (center_x, center_y + crosshair_length), color, thickness)
+        cv2.line(og_frame, (center_x - crosshair_length, center_y), (center_x + crosshair_length, center_y), color, thickness)
+        cv2.imshow("manual mode frame", og_frame)
+        cv2.waitKey(1)
+        return
     # Crop the middle section
     # og_frame = cv2.resize(og_frame, [640,480])
-    og_frame = og_frame[:, start_w:end_w, :]
+    
     t1 = time.perf_counter()
-    results = model.predict(og_frame, show = show_yolo, verbose = False)
+    results = model.predict(og_frame, show = show_yolo, conf = 0.5, iou = 0.3, verbose = False)
     
     t2 = time.perf_counter()
     if results[0].masks is None:
@@ -297,9 +367,21 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         return None
     mask = results[0].masks.xy
     conf = torch.min(results[0].boxes.conf).to('cpu').item()
-    if (len(results[0].masks) != 2):
+    if (len(results[0].masks) < 2):
         print(len(results[0].masks), " studs detected, abort computing offset")
         return None
+    elif (len(results[0].masks) > 2):   
+        mask_dists= []#todo: confidence + distance co
+        for i in range(len(mask)):
+            mask_center = np.median(mask[i], axis = 0)
+            if polygon_area(mask[i]) > 8000:
+                mask_dists.append(np.linalg.norm(mask_center - TOOL_CENTER))
+
+        mask_indices = np.argsort(mask_dists)
+
+        mask = [mask[mask_indices[0]], mask[mask_indices[1]]]
+        #mask = mask[0:2]
+        print("warning: ",len(results[0].masks), " studs detected")
     segments = np.zeros(og_frame.shape[:2])
     centers = []
     radiuses = []
@@ -324,19 +406,47 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
 
     target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
+    
     if visualize:
-        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
         
+        if visualize_all:
+            cv2.imshow("og_frame", og_frame)
+
+            segments = cv2.cvtColor(segments.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+            segments = cv2.fillPoly(segments, [top_stud_mask.astype(np.int32)], (200, 200, 200))
+            segments = cv2.fillPoly(segments, [bottom_stud_mask.astype(np.int32)], (200, 200, 200))
+            cv2.imshow("og_masks", segments)
+            
+            cv2.line(segments, (top_stud_side_x, y_top), (top_stud_side_x, segments.shape[0]), (0, 0, 200), 2)
+            cv2.line(segments, (bottom_stud_side_x, 0), (bottom_stud_side_x, y_bottom), (0, 0, 200), 2)
+            cv2.line(segments, (0, y_top), (segments.shape[1], y_top), (0, 0, 200), 2)
+            cv2.line(segments, (0, y_bottom), (segments.shape[1], y_bottom), (0, 0, 200), 2)
+            cv2.imshow("masks_with_lines", segments)
+
+            cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+            cv2.circle(segments, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+            cv2.imshow("masks_with_circles", segments)
+
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
         cv2.imshow("og_frame", og_frame)
-        segments=cv2.fillPoly(segments, [top_stud_mask.astype(np.int32)], 120)
-        segments=cv2.fillPoly(segments, [bottom_stud_mask.astype(np.int32)], 120)
+        
         # cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
         # cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
-        cv2.imshow("masks", segments)
+        
         
         cv2.waitKey(100)
+    if save_visual:
+        save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(save_dir, exist_ok=True)
+        frame_count = len(os.listdir(save_dir)) + 1
+        save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        cv2.imshow("og_frame", og_frame)
+        cv2.imwrite(save_path, og_frame)
     t3 = time.perf_counter()
 
     studs_diff = top_stud_center_adj - bottom_stud_center_adj
@@ -351,18 +461,20 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     output[:2] /= np.array([fx, fy])
 
     #temporary scaling of offset for tuning: x,y scale should be -1 and yaw should be 1
-    output[0] *= -0.7 #x,y is reversed
-    output[1] *= -0.7 
-    output[2] *= 0.5
+    output[0] *= -1 #x,y is reversed
+    output[1] *= -1 
+    output[2] *= 1
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
 if __name__ == "__main__":
     model = YOLO("studs-seg2.pt")
+    light_ring_model = YOLO("lightringv2.pt")
     camera = cv2.VideoCapture(4)
     filtered_center = np.array([0,0])
 
     # Set the loop rate (e.g., 10 Hz)
     while True:
         # Get the detected offset
-        offset = compute_offset(camera, model, show_yolo=False, visualize=True)
+        offset = compute_offset(camera, model, show_yolo=False, visualize=True, visualize_all= False)
+        #detect_light_ring.detect_lightring(camera, light_ring_model, 30, e_center= [210, 270], visualize= True)
         print(offset)

@@ -23,5 +23,5 @@ def find_cam(display = False):
         cv2.waitKey(0)
     return openCvVidCapIds
 
-if __name__ == "__main__":
-    find_cam()
+if __name__ == "__main__":  
+    find_cam(display=True)
