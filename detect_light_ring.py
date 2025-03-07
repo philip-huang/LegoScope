@@ -7,7 +7,7 @@ import numpy as np
 from collections import deque
 
 last_angle = np.array([0,0])
-last_angle_queue = deque(maxlen=10)
+last_angle_queue = deque(maxlen=6)
 
 def find_center(xyxy, img_center):
     
@@ -50,7 +50,7 @@ def detect_lightring(camera, model, z, e_center = [240,240],  visualize = False)
 
     # Crop the middle section
     og_frame = og_frame[:, start_w:end_w, :]
-    results = model.predict(og_frame, show = False, verbose = False, device = 'cuda')
+    results = model.predict(og_frame, show = False, conf = 0.6, verbose = False, device = 'cuda')
     tilt = None
     if len(results[0].boxes) > 0:
         # light_ring = results[0].boxes[0]
@@ -75,12 +75,24 @@ def detect_lightring(camera, model, z, e_center = [240,240],  visualize = False)
                     #print(center)
                     tilt = check_centered(center)
                     last_angle_queue.append(tilt)
-                    
+    rolling_average = np.median(np.array(last_angle_queue), axis=0)                 
     if visualize:
+        
+        
+        cv2.line(og_frame, (e_center[0], 0), (e_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, e_center[1]), (og_frame.shape[1], e_center[1]), (0, 0, 0), 2)
+        cv2.circle(og_frame, (center + e_center).astype(np.int64), 8, [0,230,0], -1)
+        textp = f"pitch: {rolling_average[0]:.2f} deg"
+        textr = f"roll: {rolling_average[1]:.2f} deg"
+        (text_w, text_h), _ = cv2.getTextSize(textp, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 2 + 13), (0, 0, 0), -1)
+        cv2.putText(og_frame, textp, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, textr, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.imshow("light_ring", og_frame)
         if cv2.waitKey(20) & 0xFF == ord('q'):
             pass
-    rolling_average = np.median(np.array(last_angle_queue), axis=0)
+    
     return rolling_average
               
      
@@ -91,7 +103,7 @@ if __name__ == "__main__":
     model = YOLO("lightringv2.pt")
     camera = cv2.VideoCapture(4)
     while True:
-        print(detect_lightring(camera, model, 30, e_center= [210, 270], visualize= True))
+        print(detect_lightring(camera, model, 30, e_center= [222, 270], visualize= True))
 # while True:
     
 #     ret, og_frame = camera.read()

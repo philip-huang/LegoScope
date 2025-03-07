@@ -15,8 +15,9 @@ import os
 import time
 from datetime import datetime
 last_mos = np.array([0,0,0])
-last_mos_queue = deque(maxlen=10)
+last_mos_queue = deque(maxlen=5)
 TOOL_CENTER = np.array([160, 265])
+SAVE_CLIP = False
 def mask_in_circle(mask_points, cx, cy, radius):
     """
     Compute the percentage of the mask area that lies inside a given circle.
@@ -324,7 +325,7 @@ def process_results(result, conf, angle):
     else:
         return None
     
-def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = False, crosshair = None):
+def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = None, crosshair = None):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -364,10 +365,26 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     t2 = time.perf_counter()
     if results[0].masks is None:
         print("No Studs detected")
+        if save_visual is not None:
+            save_dir = save_visual
+            frame_count = len(os.listdir(save_dir)) + 1
+            save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+            # cv2.imshow("og_frame", og_frame)
+            cv2.imwrite(save_path, og_frame)
         return None
     mask = results[0].masks.xy
     conf = torch.min(results[0].boxes.conf).to('cpu').item()
     if (len(results[0].masks) < 2):
+        if save_visual is not None:
+            save_dir = save_visual
+            frame_count = len(os.listdir(save_dir)) + 1
+            save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+            # cv2.imshow("og_frame", og_frame)
+            cv2.imwrite(save_path, og_frame)
         print(len(results[0].masks), " studs detected, abort computing offset")
         return None
     elif (len(results[0].masks) > 2):   
@@ -376,9 +393,18 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
             mask_center = np.median(mask[i], axis = 0)
             if polygon_area(mask[i]) > 8000:
                 mask_dists.append(np.linalg.norm(mask_center - TOOL_CENTER))
-
+        
         mask_indices = np.argsort(mask_dists)
-
+        if len(mask_indices) < 2:
+            if save_visual is not None:
+                save_dir = save_visual
+                frame_count = len(os.listdir(save_dir)) + 1
+                save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+                cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+                cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+                # cv2.imshow("og_frame", og_frame)
+                cv2.imwrite(save_path, og_frame)
+            return None
         mask = [mask[mask_indices[0]], mask[mask_indices[1]]]
         #mask = mask[0:2]
         print("warning: ",len(results[0].masks), " studs detected")
@@ -407,6 +433,49 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 
     target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
     
+    
+    
+        # cv2.waitKey(10)
+        
+    t3 = time.perf_counter()
+
+    studs_diff = top_stud_center_adj - bottom_stud_center_adj
+    angle = np.arctan2(studs_diff[1], studs_diff[0])
+    angle -= 1.5343
+    output = process_results(target_center_adj, conf,angle)
+    if output is None:
+        print("low confidence, ignoring offset")
+        return None
+    output[:2] -= TOOL_CENTER#diff from center
+    output[:2] *= z
+    output[:2] /= np.array([fx, fy])
+
+    #temporary scaling of offset for tuning: x,y scale should be -1 and yaw should be 1
+    output[0] *= -1 #x,y is reversed
+    output[1] *= -1 
+    output[2] *= 1
+    if save_visual is not None:
+        #print(441)
+        save_dir = save_visual
+        #print(444)
+        frame_count = len(os.listdir(save_dir)) + 1
+        save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        textx = f"x: {output[0]:.2f} mm"
+        texty = f"y: {output[1]:.2f} mm"
+        textth = f"yaw: {output[2]:.2f} rad"
+        (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
+        cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        # cv2.imshow("og_frame", og_frame)
+        cv2.imwrite(save_path, og_frame)
     if visualize:
         
         if visualize_all:
@@ -423,6 +492,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
             cv2.line(segments, (0, y_bottom), (segments.shape[1], y_bottom), (0, 0, 200), 2)
             cv2.imshow("masks_with_lines", segments)
 
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
             cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
             cv2.circle(segments, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
             cv2.imshow("masks_with_circles", segments)
@@ -430,51 +501,42 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
-        cv2.imshow("og_frame", og_frame)
+        
         
         # cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
         # cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
         
-        
-        cv2.waitKey(100)
-    if save_visual:
-        save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
-        os.makedirs(save_dir, exist_ok=True)
-        frame_count = len(os.listdir(save_dir)) + 1
-        save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
-        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
-        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
-        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        # Draw a black text box in the upper right corner
+        textx = f"x: {output[0]:.2f} mm"
+        texty = f"y: {output[1]:.2f} mm"
+        textth = f"yaw: {output[2]:.2f} rad"
+        (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
+        cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.imshow("og_frame", og_frame)
-        cv2.imwrite(save_path, og_frame)
-    t3 = time.perf_counter()
+        cv2.waitKey(20)
 
-    studs_diff = top_stud_center_adj - bottom_stud_center_adj
-    angle = np.arctan2(studs_diff[1], studs_diff[0])
-    angle -= 1.4443
-    output = process_results(target_center_adj, conf,angle)
-    if output is None:
-        print("low confidence, ignoring offset")
-        return None
-    output[:2] -= TOOL_CENTER#diff from center
-    output[:2] *= z
-    output[:2] /= np.array([fx, fy])
 
-    #temporary scaling of offset for tuning: x,y scale should be -1 and yaw should be 1
-    output[0] *= -1 #x,y is reversed
-    output[1] *= -1 
-    output[2] *= 1
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
 if __name__ == "__main__":
     model = YOLO("studs-seg2.pt")
     light_ring_model = YOLO("lightringv2.pt")
-    camera = cv2.VideoCapture(4)
+    camera = cv2.VideoCapture(0)
     filtered_center = np.array([0,0])
-
+    if SAVE_CLIP:
+        save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(save_dir, exist_ok=True)
+    else:
+        save_dir = None
     # Set the loop rate (e.g., 10 Hz)
     while True:
         # Get the detected offset
-        offset = compute_offset(camera, model, show_yolo=False, visualize=True, visualize_all= False)
+        offset = compute_offset(camera, model, show_yolo=False, visualize=True, visualize_all= False, save_visual= save_dir)
         #detect_light_ring.detect_lightring(camera, light_ring_model, 30, e_center= [210, 270], visualize= True)
         print(offset)
