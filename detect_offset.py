@@ -6,7 +6,6 @@ import time
 import numpy as np
 import torch
 from collections import deque
-from scipy.optimize import least_squares
 # from circle_fit import taubinSVD
 from scipy.optimize import minimize
 import detect_light_ring
@@ -86,66 +85,7 @@ def process_results2(results):
             output = np.zeros(3)
         
         return output
-def fit_circle2(points):
-    """
-    Real-time Accurate Circle Fitting (RACF) algorithm implementation.
 
-    Parameters:
-        points (ndarray): Array of shape (N, 2) containing the x, y coordinates of the points.
-
-    Returns:
-        (float, float, float): Estimated circle parameters (cx, cy, r) where
-        (cx, cy) is the center and r is the radius.
-    """
-    # Ensure points are in numpy array
-    points = np.asarray(points)
-
-    # Calculate the mean of the points
-    x_mean = np.mean(points[:, 0])
-    y_mean = np.mean(points[:, 1])
-
-    # Center the points by subtracting the mean
-    centered_points = points - np.array([x_mean, y_mean])
-
-    # Formulate the matrices for least-squares fitting
-    Z = np.hstack((
-        centered_points[:, 0:1] ** 2 + centered_points[:, 1:2] ** 2,
-        centered_points[:, 0:1],
-        centered_points[:, 1:2],
-        np.ones((points.shape[0], 1))
-    ))
-
-    # Solve the linear system Z.T * Z * a = 0 using SVD or least-squares
-    U, S, Vt = np.linalg.svd(Z, full_matrices=False)
-    a = Vt.T[:, -1]  # Last column of Vt gives the solution
-
-    # Recover circle parameters
-    c = -0.5 * a[1:3] / a[0]
-    radius = np.sqrt((c[0] ** 2 + c[1] ** 2) - (a[3] / a[0]))
-
-    # Shift back the center to original coordinates
-    c += np.array([x_mean, y_mean])
-
-    return np.array(c).astype(int), int(radius)
-def fit_circle(points):
-    # Define the function to minimize
-    def residuals(params, x, y):
-        xc, yc, r = params
-        return np.sqrt((x - xc)**2 + (y - yc)**2) - r
-
-    # Extract x and y coordinates
-    x = points[:, 0]
-    y = points[:, 1]
-
-    # Initial guess (mean of points for center, average distance for radius)
-    x_m, y_m = np.mean(x), np.mean(y)
-    r_guess = np.mean(np.sqrt((x - x_m)**2 + (y - y_m)**2))
-    initial_guess = [x_m, y_m, r_guess]
-
-    # Least squares optimization
-    result = least_squares(residuals, initial_guess, args=(x, y))
-    xc, yc, r = result.x
-    return np.array([xc, yc]).astype(int), int(r)
 def cost_function(r, line_x, line_y, contour):
     """
     Compute the cost for a given radius r.
@@ -167,6 +107,7 @@ def cost_function(r, line_x, line_y, contour):
     area_diff = total_area - expected_area
     cost = 3e5 * outlier_ratio + area_diff
     return cost
+
 def optimize_radius(line_x, line_y, contour, initial_guess):
     """
     Optimize the radius to minimize the cost function.
@@ -179,6 +120,7 @@ def optimize_radius(line_x, line_y, contour, initial_guess):
     )
     optimized_radius = result.x[0]
     return optimized_radius, result.fun
+
 def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
     """
     Find the minimum enclosing circle of a contour that is tangent to both a vertical and a horizontal line.
@@ -205,12 +147,6 @@ def min_enclosing_circle_tangent_to_lines(contour, line_x, line_y):
     else:
         cy = line_y + radius
     #optimize
-    # Recalculate the radius to ensure all points are enclosed
-    # distances = np.sqrt((contour[:, 0] - cx) ** 2 + (contour[:, 1] - cy) ** 2)
-    # within_circle = distances < radius
-    # enclosed_ratio = np.sum(within_circle) / within_circle.shape[0]
-    # total_area = radius*2
-    # cost = 10e5 * enclosed_ratio**2 + total_area
     radius, f = optimize_radius(line_x, line_y, contour, radius)
     if cx < line_x:
         cx = line_x -radius
@@ -265,47 +201,7 @@ def min_enclosing_circle_tangent_to_lines_old(contour, line_x, line_y):
     # Return the adjusted circle center and radius
     return np.array((cx, cy)).astype(int), int(radius)
 
-def find_intersections(centers, y_top, y_bottom):
-    """
-    Calculate the intersection points of Line1 with horizontal lines at y_top and y_bottom.
-    
-    Parameters:
-        centers (list of tuples): Two points [(x0, y0), (x1, y1)] defining Line1.
-        y_top (int): Y-coordinate of the horizontal line (Line2).
-        y_bottom (int): Y-coordinate of the horizontal line (Line3).
-    
-    Returns:
-        tuple: Intersection points ((x_intersect1, y_top), (x_intersect2, y_bottom)).
-    """
-    # Extract points for Line1
-    (x0, y0), (x1, y1) = centers
-
-    # Calculate slope (m1) and intercept (c1) of Line1
-    if x1 != x0:  # Line1 is not vertical
-        m1 = (y1 - y0) / (x1 - x0)
-        c1 = y0 - m1 * x0
-    else:  # Line1 is vertical
-        m1 = float('inf')  # Infinite slope
-        c1 = x0  # Vertical line's x-coordinate
-
-    # Intersection with Line2 (y = y_top)
-    if m1 != float('inf'):
-        x_intersect1 = (y_top - c1) / m1
-    else:
-        x_intersect1 = c1  # For vertical Line1
-    intersection1 = (int(round(x_intersect1)), y_top)
-
-    # Intersection with Line3 (y = y_bottom)
-    if m1 != float('inf'):
-        x_intersect2 = (y_bottom - c1) / m1
-    else:
-        x_intersect2 = c1  # For vertical Line1
-    intersection2 = (int(round(x_intersect2)), y_bottom)
-
-    return np.asarray([intersection1, intersection2])
-
 def process_results(result, conf, angle):
-    transform = np.array([0.01, 0.01, 1])
     global last_mos_queue
     
     # Convert the new measurement to CPU and append to the queue
@@ -356,8 +252,6 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         cv2.imshow("manual mode frame", og_frame)
         cv2.waitKey(1)
         return
-    # Crop the middle section
-    # og_frame = cv2.resize(og_frame, [640,480])
     
     t1 = time.perf_counter()
     results = model.predict(og_frame, show = show_yolo, conf = 0.5, iou = 0.3, verbose = False)
@@ -432,11 +326,6 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
 
     target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
-    
-    
-    
-        # cv2.waitKey(10)
-        
     t3 = time.perf_counter()
 
     studs_diff = top_stud_center_adj - bottom_stud_center_adj
@@ -503,10 +392,6 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
         
         
-        # cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, 250, 2)
-        # cv2.circle(segments, bottom_stud_center_adj,top_stud_radius_adj, 250, 2)
-        
-        # Draw a black text box in the upper right corner
         textx = f"x: {output[0]:.2f} mm"
         texty = f"y: {output[1]:.2f} mm"
         textth = f"yaw: {output[2]:.2f} rad"
@@ -525,8 +410,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
 if __name__ == "__main__":
-    model = YOLO("studs-seg2.pt")
-    light_ring_model = YOLO("lightringv2.pt")
+    model = YOLO("models/studs-seg2.pt")
+    light_ring_model = YOLO("models/lightringv2.pt")
     camera = cv2.VideoCapture(0)
     filtered_center = np.array([0,0])
     if SAVE_CLIP:
@@ -534,7 +419,6 @@ if __name__ == "__main__":
         os.makedirs(save_dir, exist_ok=True)
     else:
         save_dir = None
-    # Set the loop rate (e.g., 10 Hz)
     while True:
         # Get the detected offset
         offset = compute_offset(camera, model, show_yolo=False, visualize=True, visualize_all= False, save_visual= save_dir)

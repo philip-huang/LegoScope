@@ -40,13 +40,11 @@ if __name__ == "__main__":
         os.makedirs(save_dir, exist_ok=True)
     else:
         save_dir = None
-    print(43)
     rospy.init_node('tool_offset_publisher', anonymous=True)
     tool_offset_pub = rospy.Publisher('tool_offset', Float32MultiArray, queue_size=2)
     block_tilt_pub = rospy.Publisher('block_tilt', Float32MultiArray, queue_size=2)
-    # Set the loop rate (e.g., 10 Hz)
+
     rate = rospy.Rate(8)
-    print(49)
     while not rospy.is_shutdown():
         # Get the detected offset
         try:
@@ -71,6 +69,6 @@ if __name__ == "__main__":
             if tilt is not None:
                 msg = Float32MultiArray()
                 msg.data = tilt
-                print("published")
+                block_tilt_pub.publish(msg)
         # Sleep to maintain the loop rate
         rate.sleep() 
