@@ -17,6 +17,7 @@ last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=5)
 TOOL_CENTER = np.array([160, 265])
 SAVE_CLIP = False
+NEW_CAMERA = True
 def mask_in_circle(mask_points, cx, cy, radius):
     """
     Compute the percentage of the mask area that lies inside a given circle.
@@ -103,7 +104,10 @@ def cost_function(r, line_x, line_y, contour):
     
     # Compute cost
     total_area = np.pi * radius ** 2  # Area (squared diameter)
-    expected_area = np.pi * 60 ** 2
+    if NEW_CAMERA:
+        expected_area = np.pi * 50 ** 2
+    else:
+        expected_area = np.pi * 60 ** 2
     area_diff = total_area - expected_area
     cost = 3e5 * outlier_ratio + area_diff
     return cost
@@ -112,12 +116,20 @@ def optimize_radius(line_x, line_y, contour, initial_guess):
     """
     Optimize the radius to minimize the cost function.
     """
-    result = minimize(
-        cost_function, 
-        x0=[initial_guess],  # Initial guess for radius
-        args=(line_x, line_y, contour),  # Additional arguments for the cost function
-        bounds=[(80,200)]  # Radius must be positive
-    )
+    if NEW_CAMERA:
+        result = minimize(
+            cost_function, 
+            x0=[initial_guess],  # Initial guess for radius
+            args=(line_x, line_y, contour),  # Additional arguments for the cost function
+            bounds=[(20,120)]  # Radius must be positive
+        )
+    else:
+        result = minimize(
+            cost_function, 
+            x0=[initial_guess],  # Initial guess for radius
+            args=(line_x, line_y, contour),  # Additional arguments for the cost function
+            bounds=[(80,200)]  # Radius must be positive
+        )
     optimized_radius = result.x[0]
     return optimized_radius, result.fun
 
@@ -254,7 +266,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         return
     
     t1 = time.perf_counter()
-    results = model.predict(og_frame, show = show_yolo, conf = 0.5, iou = 0.3, verbose = False)
+    results = model.predict(og_frame, show = show_yolo, conf = 0.4, iou = 0.3, verbose = False)
     
     t2 = time.perf_counter()
     if results[0].masks is None:
@@ -285,10 +297,18 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         mask_dists= []#todo: confidence + distance co
         for i in range(len(mask)):
             mask_center = np.median(mask[i], axis = 0)
-            if polygon_area(mask[i]) > 8000:
-                mask_dists.append(np.linalg.norm(mask_center - TOOL_CENTER))
+            if polygon_area(mask[i]) > 6500:
+                
+                if NEW_CAMERA:
+                    dx = mask_center[0] - TOOL_CENTER[0]
+                    dy = mask_center[0] - TOOL_CENTER[1]
+                    distance = np.sqrt(3 * dx**2 + dy**2)
+                else:
+                    distance = np.linalg.norm(mask_center - TOOL_CENTER)
+                mask_dists.append(distance)
         
         mask_indices = np.argsort(mask_dists)
+        print(mask_dists)
         if len(mask_indices) < 2:
             if save_visual is not None:
                 save_dir = save_visual
@@ -412,7 +432,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
-    camera = cv2.VideoCapture(0)
+    camera = cv2.VideoCapture(4)
     filtered_center = np.array([0,0])
     if SAVE_CLIP:
         save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
