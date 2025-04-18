@@ -17,7 +17,7 @@ last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=5)
 TOOL_CENTER = np.array([160, 265])
 SAVE_CLIP = False
-NEW_CAMERA = True
+NEW_CAMERA = False
 def mask_in_circle(mask_points, cx, cy, radius):
     """
     Compute the percentage of the mask area that lies inside a given circle.
@@ -432,7 +432,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
-    camera = cv2.VideoCapture(4)
+    camera = cv2.VideoCapture(5)
     filtered_center = np.array([0,0])
     if SAVE_CLIP:
         save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -441,6 +441,6 @@ if __name__ == "__main__":
         save_dir = None
     while True:
         # Get the detected offset
-        offset = compute_offset(camera, model, show_yolo=False, visualize=True, visualize_all= False, save_visual= save_dir)
+        offset = compute_offset(camera, model, show_yolo=True, visualize=True, visualize_all= False, save_visual= save_dir)
         #detect_light_ring.detect_lightring(camera, light_ring_model, 30, e_center= [210, 270], visualize= True)
         print(offset)

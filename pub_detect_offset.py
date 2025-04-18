@@ -19,13 +19,13 @@ last_mos = np.array([0,0,0])
 #last_mos_queue = deque(maxlen=10)
 
 
-CHECK_TILT = True
+CHECK_TILT = False
 SAVE_CLIP = False
 # TOOL_CENTER = np.array([170,265])
 
 if __name__ == "__main__":
-    model = YOLO("studs-seg2.pt")
-    light_ring_model = YOLO("lightringv2.pt")
+    model = YOLO("models/studs-seg2.pt")
+    light_ring_model = YOLO("models/lightringv2.pt")
     camera_ids = find_cam()
     if camera_ids is None:
         print("no camera detected")
