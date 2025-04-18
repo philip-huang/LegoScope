@@ -7,7 +7,7 @@ from find_cam import find_cam
 
 def main():
     # Get camera
-    camera_ids = find_cam()
+    camera_ids = 6
     if not camera_ids:
         rospy.logerr("No camera detected.")
         return

@@ -55,7 +55,9 @@ if __name__ == "__main__":
             continue
 
         try:
+            cv2.imshow("Latest Image", latest_image)
             offset = compute_offset_image(latest_image, model, save_visual=save_dir)
+            cv2.waitKey(1)  # Add this line to allow OpenCV to process the window events
         except Exception as e:
             rospy.logwarn(f"Offset computation failed: {e}")
             offset = None
