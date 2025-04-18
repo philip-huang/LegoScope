@@ -2,12 +2,19 @@
 import rospy
 from sensor_msgs.msg import CompressedImage
 import cv2
-import numpy as np
-from find_cam import find_cam
+import argparse
 
 def main():
+    # Parse the robot_name and camera_id arguments
+    parser = argparse.ArgumentParser(description="Camera Feed Publisher")
+    parser.add_argument("robot_name", type=str, help="Name of the robot")
+    parser.add_argument("camera_id", type=int, help="ID of the camera")
+    args = parser.parse_args()
+    robot_name = args.robot_name
+    camera_id = args.camera_id
+
     # Get camera
-    camera_ids = 6
+    camera_ids = [camera_id]  # Use the provided camera_id
     if not camera_ids:
         rospy.logerr("No camera detected.")
         return
@@ -18,7 +25,8 @@ def main():
 
     # ROS setup
     rospy.init_node('camera_compressed_publisher', anonymous=True)
-    pub = rospy.Publisher('/camera/image/compressed', CompressedImage, queue_size=1)
+    image_topic = f"/yk_{robot_name}/gen3_image"  # Dynamically set topic based on robot_name
+    pub = rospy.Publisher(image_topic, CompressedImage, queue_size=1)
     rate = rospy.Rate(10)  # 10 Hz
 
     while not rospy.is_shutdown():

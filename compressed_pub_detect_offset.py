@@ -14,6 +14,7 @@ from detect_offset import compute_offset_image, process_results
 import detect_light_ring
 import os
 from datetime import datetime
+import argparse
 
 last_mos = np.array([0, 0, 0])
 CHECK_TILT = False
@@ -29,6 +30,13 @@ def compressed_image_callback(msg):
     latest_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
 if __name__ == "__main__":
+    # Parse the robot_name argument
+    parser = argparse.ArgumentParser(description="Tool Offset Publisher")
+    parser.add_argument("robot_name", type=str, help="Name of the robot")
+    args = parser.parse_args()
+    robot_name = args.robot_name
+
+    # Load models
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
 
@@ -42,9 +50,13 @@ if __name__ == "__main__":
 
     rospy.init_node('tool_offset_publisher', anonymous=True)
 
+    # Dynamically set topics based on robot_name
+    image_topic = f"/yk_{robot_name}/gen3_image"
+    tool_offset_topic = f"/yk_{robot_name}/tool_offset"
+
     # Subscribers & Publishers
-    rospy.Subscriber('/camera/image/compressed', CompressedImage, compressed_image_callback, queue_size=1)
-    tool_offset_pub = rospy.Publisher('tool_offset', Float32MultiArray, queue_size=2)
+    rospy.Subscriber(image_topic, CompressedImage, compressed_image_callback, queue_size=1)
+    tool_offset_pub = rospy.Publisher(tool_offset_topic, Float32MultiArray, queue_size=2)
     block_tilt_pub = rospy.Publisher('block_tilt', Float32MultiArray, queue_size=2)
 
     rate = rospy.Rate(8)
