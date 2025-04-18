@@ -429,6 +429,194 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
+def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = None, crosshair = None):
+    '''
+    Arguments: 
+    camera to read from, and yolo keypoint model to use
+    camera focal and depth in mm. Assume cx, cy are at image center, and assume fixed z
+    Outputs:
+    [x,y,confidence] if detected, None otherwise
+    '''
+    h, w, c = og_frame.shape
+    start_w = (w - 480) // 2
+    end_w = start_w + 480
+    og_frame = og_frame[:, start_w:end_w, :]
+    if crosshair:
+        center_x, center_y = map(int, crosshair)
+        crosshair_length = 200  # Length of the crosshair lines
+        color = (0,0,0)  # Green color
+        thickness = 2  # Line thickness
+        cv2.line(og_frame, (center_x, center_y - crosshair_length), 
+                (center_x, center_y + crosshair_length), color, thickness)
+        cv2.line(og_frame, (center_x - crosshair_length, center_y), (center_x + crosshair_length, center_y), color, thickness)
+        cv2.imshow("manual mode frame", og_frame)
+        cv2.waitKey(1)
+        return
+    
+    t1 = time.perf_counter()
+    results = model.predict(og_frame, show = show_yolo, conf = 0.4, iou = 0.3, verbose = False)
+    
+    t2 = time.perf_counter()
+    if results[0].masks is None:
+        print("No Studs detected")
+        if save_visual is not None:
+            save_dir = save_visual
+            frame_count = len(os.listdir(save_dir)) + 1
+            save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+            # cv2.imshow("og_frame", og_frame)
+            cv2.imwrite(save_path, og_frame)
+        return None
+    mask = results[0].masks.xy
+    conf = torch.min(results[0].boxes.conf).to('cpu').item()
+    if (len(results[0].masks) < 2):
+        if save_visual is not None:
+            save_dir = save_visual
+            frame_count = len(os.listdir(save_dir)) + 1
+            save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+            # cv2.imshow("og_frame", og_frame)
+            cv2.imwrite(save_path, og_frame)
+        print(len(results[0].masks), " studs detected, abort computing offset")
+        return None
+    elif (len(results[0].masks) > 2):   
+        mask_dists= []#todo: confidence + distance co
+        for i in range(len(mask)):
+            mask_center = np.median(mask[i], axis = 0)
+            if polygon_area(mask[i]) > 6500:
+                
+                if NEW_CAMERA:
+                    dx = mask_center[0] - TOOL_CENTER[0]
+                    dy = mask_center[0] - TOOL_CENTER[1]
+                    distance = np.sqrt(3 * dx**2 + dy**2)
+                else:
+                    distance = np.linalg.norm(mask_center - TOOL_CENTER)
+                mask_dists.append(distance)
+        
+        mask_indices = np.argsort(mask_dists)
+        print(mask_dists)
+        if len(mask_indices) < 2:
+            if save_visual is not None:
+                save_dir = save_visual
+                frame_count = len(os.listdir(save_dir)) + 1
+                save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+                cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+                cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+                # cv2.imshow("og_frame", og_frame)
+                cv2.imwrite(save_path, og_frame)
+            return None
+        mask = [mask[mask_indices[0]], mask[mask_indices[1]]]
+        #mask = mask[0:2]
+        print("warning: ",len(results[0].masks), " studs detected")
+    segments = np.zeros(og_frame.shape[:2])
+    centers = []
+    radiuses = []
+    for i in range(min(2, len(mask))):
+        (x, y), radius = cv2.minEnclosingCircle(mask[i])
+        center = (int(x), int(y))  # Convert center coordinates to integers
+        radius = int(radius)       # Convert radius to an integer
+        centers.append(center)
+        radiuses.append(radius)
+    top_stud_mask = mask[np.argmax([np.median(mask[0][:,1]), np.median(mask[1][:,1])])] #top stud is the one with higher Y value, which is at the BOTTOM in image
+    bottom_stud_mask = mask[np.argmin([np.median(mask[0][:,1]), np.median(mask[1][:,1])])]
+    y_top = np.min(top_stud_mask[:,1]).astype(int)
+    y_bottom = np.max(bottom_stud_mask[:,1]).astype(int)
+    if(np.average([centers[0][0], centers[1][0]])< 200):
+        top_stud_side_x = np.max(top_stud_mask[:,0]).astype(int)
+        bottom_stud_side_x = np.max(bottom_stud_mask[:,0]).astype(int)
+    else:
+        top_stud_side_x = np.min(top_stud_mask[:,0]).astype(int)
+        bottom_stud_side_x = np.min(bottom_stud_mask[:,0]).astype(int)
+
+    top_stud_center_adj, top_stud_radius_adj = min_enclosing_circle_tangent_to_lines(top_stud_mask, top_stud_side_x, y_top)
+    bottom_stud_center_adj, bottom_stud_radius_adj = min_enclosing_circle_tangent_to_lines(bottom_stud_mask, bottom_stud_side_x, y_bottom)
+
+    target_center_adj = np.mean([top_stud_center_adj, bottom_stud_center_adj], axis = 0)
+    t3 = time.perf_counter()
+
+    studs_diff = top_stud_center_adj - bottom_stud_center_adj
+    angle = np.arctan2(studs_diff[1], studs_diff[0])
+    angle -= 1.5343
+    output = process_results(target_center_adj, conf,angle)
+    if output is None:
+        print("low confidence, ignoring offset")
+        return None
+    output[:2] -= TOOL_CENTER#diff from center
+    output[:2] *= z
+    output[:2] /= np.array([fx, fy])
+
+    #temporary scaling of offset for tuning: x,y scale should be -1 and yaw should be 1
+    output[0] *= -1 #x,y is reversed
+    output[1] *= -1 
+    output[2] *= 1
+    if save_visual is not None:
+        #print(441)
+        save_dir = save_visual
+        #print(444)
+        frame_count = len(os.listdir(save_dir)) + 1
+        save_path = os.path.join(save_dir, f"frame{frame_count:04d}.png")
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        textx = f"x: {output[0]:.2f} mm"
+        texty = f"y: {output[1]:.2f} mm"
+        textth = f"yaw: {output[2]:.2f} rad"
+        (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
+        cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        # cv2.imshow("og_frame", og_frame)
+        cv2.imwrite(save_path, og_frame)
+    if visualize:
+        
+        if visualize_all:
+            cv2.imshow("og_frame", og_frame)
+
+            segments = cv2.cvtColor(segments.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+            segments = cv2.fillPoly(segments, [top_stud_mask.astype(np.int32)], (200, 200, 200))
+            segments = cv2.fillPoly(segments, [bottom_stud_mask.astype(np.int32)], (200, 200, 200))
+            cv2.imshow("og_masks", segments)
+            
+            cv2.line(segments, (top_stud_side_x, y_top), (top_stud_side_x, segments.shape[0]), (0, 0, 200), 2)
+            cv2.line(segments, (bottom_stud_side_x, 0), (bottom_stud_side_x, y_bottom), (0, 0, 200), 2)
+            cv2.line(segments, (0, y_top), (segments.shape[1], y_top), (0, 0, 200), 2)
+            cv2.line(segments, (0, y_bottom), (segments.shape[1], y_bottom), (0, 0, 200), 2)
+            cv2.imshow("masks_with_lines", segments)
+
+            cv2.line(og_frame, (og_frame.shape[1] // 2, 0), (og_frame.shape[1] // 2, og_frame.shape[0]), (0, 0, 0), 2)
+            cv2.line(og_frame, (0, og_frame.shape[0] // 2), (og_frame.shape[1], og_frame.shape[0] // 2), (0, 0, 0), 2)
+            cv2.circle(segments, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+            cv2.circle(segments, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+            cv2.imshow("masks_with_circles", segments)
+
+        cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
+        cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
+        
+        
+        textx = f"x: {output[0]:.2f} mm"
+        texty = f"y: {output[1]:.2f} mm"
+        textth = f"yaw: {output[2]:.2f} rad"
+        (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
+        cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+        cv2.imshow("og_frame", og_frame)
+        cv2.waitKey(20)
+
+
+    return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
+
 if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
