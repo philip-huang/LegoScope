@@ -1,0 +1,7 @@
+networkx
+numpy
+torch==<version>+cu124
+torchvision==<version>+cu124
+torchaudio==<version>+cu124
+--extra-index-url https://download.pytorch.org/whl/cu124
+ultralytics

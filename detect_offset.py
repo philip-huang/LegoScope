@@ -91,6 +91,10 @@ def cost_function(r, line_x, line_y, contour):
     """
     Compute the cost for a given radius r.
     """
+    if NEW_CAMERA:
+        expected_radius = 50
+    else:
+        expected_radius = 60
     radius = r[0]
     # Update cx and cy based on the given conditions
     cx = line_x - radius if contour[:, 0].mean() < line_x else line_x + radius
@@ -104,10 +108,7 @@ def cost_function(r, line_x, line_y, contour):
     
     # Compute cost
     total_area = np.pi * radius ** 2  # Area (squared diameter)
-    if NEW_CAMERA:
-        expected_area = np.pi * 50 ** 2
-    else:
-        expected_area = np.pi * 60 ** 2
+    expected_area = np.pi * expected_radius ** 2
     area_diff = total_area - expected_area
     cost = 3e5 * outlier_ratio + area_diff
     return cost
@@ -620,7 +621,7 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
 if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
-    camera = cv2.VideoCapture(5)
+    camera = cv2.VideoCapture(4)
     filtered_center = np.array([0,0])
     if SAVE_CLIP:
         save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
