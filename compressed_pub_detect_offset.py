@@ -7,7 +7,7 @@ import torch
 from collections import deque
 import rospy
 from std_msgs.msg import Float32MultiArray
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Image
 from scipy.optimize import least_squares
 from find_cam import find_cam
 from detect_offset import compute_offset_image, process_results
@@ -40,7 +40,12 @@ if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")
     light_ring_model = YOLO("models/lightringv2.pt")
 
-    filtered_center = np.array([0, 0])
+    if robot_name == "destroyer":
+        tool_center = np.array([160, 265])
+        cam_z = 30.0
+    elif robot_name == "architect":
+        tool_center = np.array([205, 230])
+        cam_z = 30.0
 
     if SAVE_CLIP:
         save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -51,13 +56,15 @@ if __name__ == "__main__":
     rospy.init_node('tool_offset_publisher', anonymous=True)
 
     # Dynamically set topics based on robot_name
-    image_topic = f"/yk_{robot_name}/gen3_image"
+    image_topic = f"/yk_{robot_name}/gen3_image/compressed"
     tool_offset_topic = f"/yk_{robot_name}/tool_offset"
+    det_topic = f"/yk_{robot_name}/gen3_det"
 
     # Subscribers & Publishers
     rospy.Subscriber(image_topic, CompressedImage, compressed_image_callback, queue_size=1)
     tool_offset_pub = rospy.Publisher(tool_offset_topic, Float32MultiArray, queue_size=2)
     block_tilt_pub = rospy.Publisher('block_tilt', Float32MultiArray, queue_size=2)
+    gen3_det_pub = rospy.Publisher(det_topic, Image, queue_size=2)
 
     rate = rospy.Rate(8)
     while not rospy.is_shutdown():
@@ -67,9 +74,10 @@ if __name__ == "__main__":
             continue
 
         try:
-            cv2.imshow("Latest Image", latest_image)
-            offset = compute_offset_image(latest_image, model, save_visual=save_dir, visualize=True)
-            cv2.waitKey(1)  # Add this line to allow OpenCV to process the window events
+            #cv2.imshow("Latest Image", latest_image)
+            offset = compute_offset_image(latest_image, model, save_visual=save_dir, visualize=True, 
+                                          ros_pub=gen3_det_pub, tool_center=tool_center, z=cam_z)
+            #cv2.waitKey(1)  # Add this line to allow OpenCV to process the window events
         except Exception as e:
             rospy.logwarn(f"Offset computation failed: {e}")
             offset = None

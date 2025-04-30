@@ -214,7 +214,7 @@ def min_enclosing_circle_tangent_to_lines_old(contour, line_x, line_y):
     # Return the adjusted circle center and radius
     return np.array((cx, cy)).astype(int), int(radius)
 
-def process_results(result, conf, angle):
+def process_results(result, conf, angle, verbose=False):
     global last_mos_queue
     
     # Convert the new measurement to CPU and append to the queue
@@ -228,13 +228,15 @@ def process_results(result, conf, angle):
         output = np.zeros(3)
         output[:3] = rolling_average
 
-        print("center: ", rolling_average, "with confidence", conf)
+        if verbose:
+            print("center: ", rolling_average, "with confidence", conf)
             
         return output
     else:
         return None
     
-def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = None, crosshair = None):
+def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, 
+                   visualize_all = False,save_visual = None, crosshair = None, tool_center = TOOL_CENTER):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -301,11 +303,11 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
             if polygon_area(mask[i]) > 6500:
                 
                 if NEW_CAMERA:
-                    dx = mask_center[0] - TOOL_CENTER[0]
-                    dy = mask_center[0] - TOOL_CENTER[1]
+                    dx = mask_center[0] - tool_center[0]
+                    dy = mask_center[0] - tool_center[1]
                     distance = np.sqrt(3 * dx**2 + dy**2)
                 else:
-                    distance = np.linalg.norm(mask_center - TOOL_CENTER)
+                    distance = np.linalg.norm(mask_center - tool_center)
                 mask_dists.append(distance)
         
         mask_indices = np.argsort(mask_dists)
@@ -356,7 +358,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     if output is None:
         print("low confidence, ignoring offset")
         return None
-    output[:2] -= TOOL_CENTER#diff from center
+    output[:2] -= tool_center#diff from center
     output[:2] *= z
     output[:2] /= np.array([fx, fy])
 
@@ -378,8 +380,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         textth = f"yaw: {output[2]:.2f} rad"
         (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
         box_x, box_y = og_frame.shape[1] - text_w - 20, 20
-        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
-        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
         cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
         cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
@@ -418,8 +420,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
         textth = f"yaw: {output[2]:.2f} rad"
         (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
         box_x, box_y = og_frame.shape[1] - text_w - 20, 20
-        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
-        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
         cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
         cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
@@ -430,7 +432,8 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
 
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
-def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, visualize_all = False,save_visual = None, crosshair = None):
+def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, 
+                         visualize_all = False,save_visual = None, crosshair = None, ros_pub = None, tool_center = TOOL_CENTER):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -489,11 +492,11 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
             if polygon_area(mask[i]) > 6500:
                 
                 if NEW_CAMERA:
-                    dx = mask_center[0] - TOOL_CENTER[0]
-                    dy = mask_center[0] - TOOL_CENTER[1]
+                    dx = mask_center[0] - tool_center[0]
+                    dy = mask_center[0] - tool_center[1]
                     distance = np.sqrt(3 * dx**2 + dy**2)
                 else:
-                    distance = np.linalg.norm(mask_center - TOOL_CENTER)
+                    distance = np.linalg.norm(mask_center - tool_center)
                 mask_dists.append(distance)
         
         mask_indices = np.argsort(mask_dists)
@@ -544,7 +547,7 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
     if output is None:
         print("low confidence, ignoring offset")
         return None
-    output[:2] -= TOOL_CENTER#diff from center
+    output[:2] -= tool_center#diff from center
     output[:2] *= z
     output[:2] /= np.array([fx, fy])
 
@@ -566,8 +569,8 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
         textth = f"yaw: {output[2]:.2f} rad"
         (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
         box_x, box_y = og_frame.shape[1] - text_w - 20, 20
-        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
-        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
         cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
         cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
@@ -606,14 +609,20 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
         textth = f"yaw: {output[2]:.2f} rad"
         (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
         box_x, box_y = og_frame.shape[1] - text_w - 20, 20
-        cv2.line(og_frame, (TOOL_CENTER[0], 0), (TOOL_CENTER[0], og_frame.shape[0]), (0, 0, 0), 2)
-        cv2.line(og_frame, (0, TOOL_CENTER[1]), (og_frame.shape[1], TOOL_CENTER[1]), (0, 0, 0), 2)
+        cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+        cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
         cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
         cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
-        cv2.imshow("og_frame", og_frame)
-        cv2.waitKey(20)
+        #cv2.imshow("og_frame", og_frame)
+        #cv2.waitKey(20)
+
+        if ros_pub is not None:
+            from cv_bridge import CvBridge
+            bridge = CvBridge()
+            msg = bridge.cv2_to_imgmsg(og_frame, encoding="bgr8")
+            ros_pub.publish(msg)
 
 
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
