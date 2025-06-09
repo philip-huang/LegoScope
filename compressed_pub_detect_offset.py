@@ -44,8 +44,8 @@ if __name__ == "__main__":
         tool_center = np.array([160, 265])
         cam_z = 30.0
     elif robot_name == "architect":
-        tool_center = np.array([205, 230])
-        cam_z = 30.0
+        tool_center = np.array([212, 230])
+        cam_z = 25.0
 
     if SAVE_CLIP:
         save_dir = os.path.join("saved_clips", "clip" + datetime.now().strftime("%Y%m%d_%H%M%S"))
