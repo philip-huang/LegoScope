@@ -13,11 +13,13 @@ from shapely.geometry import Polygon, Point
 import os
 import time
 from datetime import datetime
+from cv_bridge import CvBridge
 last_mos = np.array([0,0,0])
 last_mos_queue = deque(maxlen=5)
 TOOL_CENTER = np.array([160, 265])
 SAVE_CLIP = False
 NEW_CAMERA = False
+
 def mask_in_circle(mask_points, cx, cy, radius):
     """
     Compute the percentage of the mask area that lies inside a given circle.
@@ -433,7 +435,7 @@ def compute_offset(camera, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = F
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
 
 def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_yolo = False, visualize = False, 
-                         visualize_all = False,save_visual = None, crosshair = None, ros_pub = None, tool_center = TOOL_CENTER):
+                         visualize_all = False,save_visual = None, crosshair = None, tool_center = TOOL_CENTER):
     '''
     Arguments: 
     camera to read from, and yolo keypoint model to use
@@ -578,7 +580,7 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
         # cv2.imshow("og_frame", og_frame)
         cv2.imwrite(save_path, og_frame)
     if visualize:
-        
+
         if visualize_all:
             cv2.imshow("og_frame", og_frame)
 
@@ -602,30 +604,43 @@ def compute_offset_image(og_frame, model, fx = 1100 , fy = 1100, z = 30.0, show_
         cv2.circle(og_frame, top_stud_center_adj,top_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, bottom_stud_center_adj,bottom_stud_radius_adj, [0,230,0], 2)
         cv2.circle(og_frame, target_center_adj.astype(np.int64), 6, [0,230,0], -1)
-        
-        
-        textx = f"x: {output[0]:.2f} mm"
-        texty = f"y: {output[1]:.2f} mm"
-        textth = f"yaw: {output[2]:.2f} rad"
-        (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
-        box_x, box_y = og_frame.shape[1] - text_w - 20, 20
-        cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
-        cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
-        cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 3 + 13), (0, 0, 0), -1)
-        cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
-        cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
-        cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
-        #cv2.imshow("og_frame", og_frame)
-        #cv2.waitKey(20)
-
-        if ros_pub is not None:
-            from cv_bridge import CvBridge
-            bridge = CvBridge()
-            msg = bridge.cv2_to_imgmsg(og_frame, encoding="bgr8")
-            ros_pub.publish(msg)
-
 
     return np.concatenate([output[:2] / 1000, [output[2]]]) #mm to meter
+
+def publish_offset_image(og_frame, tool_center, output, in_hand_classification, ros_pub):
+    if output is not None:
+        textx = f"x: {output[0]*1000:.2f} mm"
+        texty = f"y: {output[1]*1000:.2f} mm"
+        textth = f"yaw: {output[2]:.2f} rad"
+    else:
+        textx = "x: --"
+        texty = "y: --"
+        textth = "yaw: --"
+    if in_hand_classification is not None:
+        textdet = f"cls: {'has' if in_hand_classification else 'none'}" # True or False
+    else:
+        textdet = f"cls: --" # True or False
+
+    # (text_w, text_h), _ = cv2.getTextSize(max([textx, texty, textth, textdet], key=lambda x: len(x)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+    (text_w, text_h), _ = cv2.getTextSize(textth, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 1)
+
+    box_x, box_y = og_frame.shape[1] - text_w - 20, 20
+    cv2.line(og_frame, (tool_center[0], 0), (tool_center[0], og_frame.shape[0]), (0, 0, 0), 2)
+    cv2.line(og_frame, (0, tool_center[1]), (og_frame.shape[1], tool_center[1]), (0, 0, 0), 2)
+    cv2.rectangle(og_frame, (box_x - 10, box_y - 10), (box_x + text_w + 5, box_y + text_h * 4 + 20), (0, 0, 0), -1)
+
+    cv2.putText(og_frame, textx, (box_x, box_y + text_h), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+    cv2.putText(og_frame, texty, (box_x, box_y + 2 * text_h + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+    cv2.putText(og_frame, textth, (box_x, box_y + 3 * text_h + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+    cv2.putText(og_frame, textdet, (box_x, box_y + 4 * text_h + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
+    #cv2.imshow("og_frame", og_frame)
+    #cv2.waitKey(20)
+
+    if ros_pub is not None:
+        bridge = CvBridge()
+        msg = bridge.cv2_to_imgmsg(og_frame, encoding="bgr8")
+        ros_pub.publish(msg)
+
 
 if __name__ == "__main__":
     model = YOLO("models/studs-seg2.pt")

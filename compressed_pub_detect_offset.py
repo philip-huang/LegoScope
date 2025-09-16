@@ -6,11 +6,11 @@ import numpy as np
 import torch
 from collections import deque
 import rospy
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Bool
 from sensor_msgs.msg import CompressedImage, Image
 from scipy.optimize import least_squares
 from find_cam import find_cam
-from detect_offset import compute_offset_image, process_results
+from detect_offset import compute_offset_image, publish_offset_image, process_results
 import detect_light_ring
 import os
 from datetime import datetime
@@ -22,12 +22,17 @@ SAVE_CLIP = False
 
 # Global variable for latest image frame
 latest_image = None
+latest_in_hand_classification = None
 
 def compressed_image_callback(msg):
     global latest_image
     # Convert CompressedImage to OpenCV image
     np_arr = np.frombuffer(msg.data, np.uint8)
     latest_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+def in_hand_classification_callback(msg):
+    global latest_in_hand_classification
+    latest_in_hand_classification = msg.data
 
 if __name__ == "__main__":
     # Parse the robot_name argument
@@ -41,10 +46,10 @@ if __name__ == "__main__":
     light_ring_model = YOLO("models/lightringv2.pt")
 
     if robot_name == "destroyer":
-        tool_center = np.array([160, 265])
-        cam_z = 30.0
+        tool_center = np.array([180, 270]) # 06/16/2025
+        cam_z = 25.0
     elif robot_name == "architect":
-        tool_center = np.array([212, 230])
+        tool_center = np.array([220, 240])
         cam_z = 25.0
 
     if SAVE_CLIP:
@@ -59,9 +64,11 @@ if __name__ == "__main__":
     image_topic = f"/yk_{robot_name}/gen3_image/compressed"
     tool_offset_topic = f"/yk_{robot_name}/tool_offset"
     det_topic = f"/yk_{robot_name}/gen3_det"
+    pick_place_fail_topic = f"/yk_{robot_name}/pick_place_classify" # for pick-place failure detection
 
     # Subscribers & Publishers
     rospy.Subscriber(image_topic, CompressedImage, compressed_image_callback, queue_size=1)
+    rospy.Subscriber(pick_place_fail_topic, Bool, in_hand_classification_callback, queue_size=1)
     tool_offset_pub = rospy.Publisher(tool_offset_topic, Float32MultiArray, queue_size=2)
     block_tilt_pub = rospy.Publisher('block_tilt', Float32MultiArray, queue_size=2)
     gen3_det_pub = rospy.Publisher(det_topic, Image, queue_size=2)
@@ -76,7 +83,9 @@ if __name__ == "__main__":
         try:
             #cv2.imshow("Latest Image", latest_image)
             offset = compute_offset_image(latest_image, model, save_visual=save_dir, visualize=True, 
-                                          ros_pub=gen3_det_pub, tool_center=tool_center, z=cam_z)
+                                          tool_center=tool_center, z=cam_z)
+            
+            publish_offset_image(latest_image, tool_center, offset, latest_in_hand_classification, gen3_det_pub)
             #cv2.waitKey(1)  # Add this line to allow OpenCV to process the window events
         except Exception as e:
             rospy.logwarn(f"Offset computation failed: {e}")
